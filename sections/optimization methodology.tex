@@ -1,0 +1,187 @@
+\section{Optimization Methodology}
+\justifying
+
+Optimization focused on measurable and directly controllable boot phases: \textbf{Loader} and \textbf{Kernel}. Each optimization was evaluated using before/after cold-boot averages (five trials per state), and improvements are reported both as absolute reductions and as normalized ratios (e.g., $\Delta L/L_{\text{total}}$, $\Delta K/K_{\text{total}}$, L:loader, K:kernel) to support fair comparison across platforms and storage media.
+
+\subsection{Kernel-Level Optimizations}
+\justifying
+
+Kernel-level work aimed to reduce boot time by trimming unnecessary features/drivers and by enforcing deterministic early-boot support where the storage interface requires it (especially USB). The kernel configuration phase was treated as a structured \textit{reduction and integration} problem rather than complete useless minimization. The objective was to minimize early-boot work while preserving functional correctness across all experimental setups. To achieve this, broad areas of kernel functionality that were unlikely to be required in the target environments were identified first, prioritizing options that plausibly increase kernel image size, initramfs complexity, or driver probing during boot.To validate configuration decisions and understand module/driver purpose, the Linux Kernel Driver Database (LKDDB) was used as the primary reference \cite{lkddb}.
+
+\subsubsection{Kernel Version and Configuration Approach}
+The optimization workflow was applied to Linux Kernel \textbf{6.12.6} through selective configuration changes designed to reduce kernel footprint and early initialization work.Based on baseline observations and Linux boot internals, potential optimizations were grouped into high-level areas: legacy hardware support, unused networking subsystems, non-essential filesystem drivers, debugging/tracing infrastructure, virtualization features not applicable to the execution context, and the placement of critical storage and graphics drivers across the kernel image, initramfs, and loadable modules. This grouping provided a logical way to reason about trade offs instead of disabling options in isolation. A total of \textbf{38 candidate kernel configuration changes} were identified and organized into functional groups as mentioned above. \\
+
+For native \textbf{SSD/NVMe} configurations, the full \textbf{38-change set} was applied, since storage discovery is direct and early-boot dependencies are less fragile. For native \textbf{USB} configurations, only \textbf{20 changes} were applied; the remaining items were intentionally excluded to preserve removable-media boot safety and portability (e.g., retaining EFI-relevant filesystems and avoiding aggressive driver trimming that could break early root discovery). This staged approach allows the performance gains of broader trimming on SSD to be captured while maintaining stability on USB-boot systems.
+
+% Requires: \usepackage{booktabs} \usepackage{array} \usepackage{p{}} columns (already common)
+\begin{table}[H]
+\centering
+\caption{Identified kernel optimization targets (38 total) grouped by category.}
+\label{tab:kern_38_targets}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}p{3.2cm} p{10.6cm} r@{}}
+\toprule
+\textbf{Category} & \textbf{Kernel config targets} & \textbf{Count} \\
+\midrule
+Legacy hardware &
+\texttt{CONFIG\_PCCARD}, \texttt{CONFIG\_PCMCIA}, \texttt{CONFIG\_CARDBUS}, \texttt{CONFIG\_PARPORT}, \texttt{CONFIG\_BLK\_DEV\_FD}
+& 5 \\
+
+Networking &
+\texttt{CONFIG\_ATM}, \texttt{CONFIG\_CAN}, \texttt{CONFIG\_HAMRADIO}, \texttt{CONFIG\_ISDN}, \texttt{CONFIG\_INFINIBAND}
+& 5 \\
+
+Filesystems &
+\texttt{CONFIG\_JFS\_FS}, \texttt{CONFIG\_XFS\_FS}, \texttt{CONFIG\_BTRFS\_FS}, \texttt{CONFIG\_F2FS\_FS}, \texttt{CONFIG\_NTFS3\_FS}, \texttt{CONFIG\_NTFS\_FS}, \texttt{CONFIG\_HFS\_FS}, \texttt{CONFIG\_HFSPLUS\_FS}
+& 8 \\
+
+Debugging / tracing &
+\texttt{CONFIG\_DEBUG\_BUGVERBOSE}, \texttt{CONFIG\_DEBUG\_KERNEL}, \texttt{CONFIG\_MAGIC\_SYSRQ}, \texttt{CONFIG\_DEBUG\_FS}, \texttt{CONFIG\_SLUB\_DEBUG}, \texttt{CONFIG\_LOCKUP\_DETECTOR}, \texttt{CONFIG\_SCHED\_INFO}, \texttt{CONFIG\_FTRACE}
+& 8 \\
+
+CPU / virtualization &
+\texttt{CONFIG\_X86\_NATIVE\_CPU}, \texttt{CONFIG\_HYPERVISOR\_GUEST}, \texttt{CONFIG\_PARAVIRT}, \texttt{CONFIG\_XEN}, \texttt{CONFIG\_KVM\_GUEST}
+& 5 \\
+
+Built-in drivers &
+\texttt{CONFIG\_NVME\_CORE}, \texttt{CONFIG\_BLK\_DEV\_NVME},
+\texttt{CONFIG\_MMC}, \texttt{CONFIG\_MMC\_BLOCK}, \texttt{CONFIG\_DRM\_AMDGPU}, \texttt{CONFIG\_DRM\_NOUVEAU}, \texttt{CONFIG\_VIDEO\_DEV},
+\texttt{CONFIG\_MD},
+\texttt{CONFIG\_RAID6\_PQ},
+\texttt{CONFIG\_RAID6\_PQ\_BENCHMARK}& 7 \\
+\midrule
+\multicolumn{2}{r}{\textbf{Total}} & \textbf{38} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+
+\subsubsection{Compression Strategy: Transition to LZ4}
+Kernel and initramfs compression were transitioned from GZIP to \textbf{LZ4}. The goal was to reduce early-boot wall-time by prioritizing decompression speed:
+\begin{itemize}
+    \item \textbf{Performance rationale:} LZ4 can produce a larger compressed artifact than stronger compressors, but manual trimming (removing unnecessary driver batches) helps keep overall payload size bounded.
+    \item \textbf{USB relevance:} on USB, early boot performance is sensitive to both I/O throughput and decompression overhead; faster decompression reduces time spent in the critical early pipeline.
+\end{itemize}
+
+\subsubsection{Initramfs Configuration and Stability}
+Initramfs policy was interface-dependent:
+\begin{itemize}
+    \item \textbf{NVMe/SSD systems:} remained stable with \textbf{\texttt{MODULES=dep}}, producing a leaner initramfs aligned with direct PCIe storage discovery.
+    \item \textbf{USB systems:} attempts to use \texttt{MODULES=dep} resulted in a boot drop to an initramfs BusyBox shell due to missing early-boot bridging drivers. USB systems were stabilized using \textbf{\texttt{MODULES=most}} to ensure the root device is discoverable during early boot.
+\end{itemize}
+
+\vspace{0.3cm}
+
+\subsubsection{Driver Integration and Built-in Requirements}
+For USB boot safety, critical drivers were changed from modules to \textbf{built-in} (\texttt{=y}) so the kernel can mount the root filesystem without depending on late module availability:
+\begin{itemize}
+    \item USB XHCI host controller support,
+    \item USB mass storage support,
+    \item ext4 filesystem support.
+\end{itemize}
+
+\vspace{0.3cm}
+
+\subsubsection{Stability Exclusions (USB Safety)}
+From the 38 tracked kernel targets, \textbf{18 were explicitly not applied} to USB-based native configurations to preserve stability and interoperability. Table~\ref{tab:excluded_opts_usb} summarizes representative exclusions.
+
+\vspace{0.1cm}
+
+
+\begin{table}[H]
+\centering
+\caption{Representative kernel optimizations excluded to maintain USB system stability.}
+\label{tab:excluded_opts_usb}
+\begin{tabular}{|l|p{5.7cm}|p{6.2cm}|}
+\hline
+\textbf{Category} & \textbf{Optimizations Excluded} & \textbf{Reason for Exclusion} \\ \hline
+Filesystems & NTFS, NTFS3, F2FS, HFS, HFSPLUS & Cross-platform removable-media compatibility. \\ \hline
+Boot Safety & FAT\_FS, MSDOS\_FS & Required to access the EFI System Partition. \\ \hline
+USB Drivers & MMC, MMC\_BLOCK & Risk of drive non-recognition at boot on some controllers/bridges. \\ \hline
+Graphics & AMDGPU, NOUVEAU & Built-in GPU drivers may trigger early-boot stalls/timeouts on USB. \\ \hline
+Portability & X86\_NATIVE\_CPU & Kept generic to avoid device-specific brittleness. \\ \hline
+\end{tabular}
+\end{table}
+
+\vspace{5cm}
+
+
+\subsubsection{Investigating \textit{make tinyconfig} and \textit{make localmodconfig}}
+
+The source project of Linux kernel also offers presets and scripts for different types of kernel configurations. The whole lists can be seen in make help target, however among those targets, make tinyconfig and make localmodconfig aligns the most with the premise of this project that is optimizing the boot times by removing the unnecessary modules. By the target descriptions tinyconfig produces the smallest possible kernel with the downside of unrelaiblity in most hardware. On the contrary the localmodconfig script looks at the loaded drivers and disables anything that is not presently used by the machine and kernel. In the testing both targets are observed to cut down on compile and installation(make modules-install and make install) times massively with \textit{tinyconfig} being more prominent than other. Unfortunately, tinyconfig did not boot as expected therefore not used in the optimizations list. The localmodconfig target on the other hand did not brake anything that is already working expectedly and resulted a real boost but it didn't adopted to use in the project because even though it booted and runned normally it removed a lot of utility and feature from the OS. To name a few; bluetooth, ethernet port, audio input-output, HDI (human-device interface) drivers for mouse and keyboards were not available afterwards because those are not at the use when the localmodconfig is generated. Due to this findings both configurations didn't made it to the final list of optimizations.
+%%\ref{tab:localmodconfig}
+
+\subsection{Bootloader Optimization}
+\justifying
+
+To minimize pre-kernel latency, the bootloader path was simplified by transitioning from GRUB to \textbf{systemd-boot} \cite{systemd_boot}. Compared to GRUB, systemd-boot uses a smaller configuration surface and avoids script/module discovery overhead, providing a more direct EFI-to-kernel handoff.
+
+\subsubsection{Transition to systemd-boot}
+The optimized native setups used systemd-boot as the primary boot manager:
+\begin{itemize}
+    \item \textbf{Efficiency:} eliminates GRUB module search and complex script processing overhead.
+    \item \textbf{Deterministic behavior:} minimal boot entries (kernel, initramfs, command line) reduce variability across trials.
+\end{itemize}
+
+\subsubsection{Timeout Policy}
+To avoid introducing artificial waiting time, the boot menu timeout was set to \texttt{0} where appropriate, ensuring the loader does not add user-visible delay to the measured boot path.
+
+\subsubsection{UKI Evaluation and Experimental Constraint}
+Unified Kernel Images (UKI) were evaluated as a future step to package kernel, initramfs, and command line into a single EFI-loadable artifact. During this evaluation, the primary USB device entered a persistent read-only state, requiring migration to an equivalent device. To preserve measurement integrity and avoid uncontrolled drift mid-campaign, UKI adoption was deferred, and the optimized measurements continued with the conventional kernel + initramfs model under systemd-boot.
+\label{sec:uki}
+
+\subsection{Staggered Spin-up Optimization for Parallels VM}
+\label{sec:sss_optimization}
+\justifying
+
+The virtualized ARM environment under Parallels Desktop exhibited a platform-specific kernel bottleneck that required targeted intervention beyond general kernel configuration trimming. This optimization directly addressed how the Linux AHCI driver interacts with Parallels' virtual AHCI controller and its advertised capabilities.
+
+\subsubsection{Problem Identification Through Kernel Profiling}
+\justifying
+
+Initial kernel time measurements for both Arch Linux ARM and Debian 12 ARM guests showed kernel initialization times exceeding 2 seconds, despite running on modern Apple Silicon hardware. To isolate the source of this overhead, kernel profiling was conducted using:
+
+\begin{itemize}
+    \item \texttt{initcall\_debug} kernel parameter to capture function-level timing,
+    \item \texttt{journalctl -k -b -o short-monotonic} to correlate timestamps and identify gaps between initcalls,
+    \item \texttt{journalctl -k -b | grep -E "initcall .* returned"} with sorting to rank time-consuming initialization calls.
+    \item \texttt{dmesg} to see raw kernel messages with timestamps
+    \item \texttt{Serial Port in server mode} to stream kernel outputs to an external console
+\end{itemize}
+
+This analysis revealed that while individual initcall durations were reasonable, multi-hundred-millisecond gaps appeared in the kernel timeline. These gaps corresponded to device probing activity, specifically SATA link detection on the \texttt{PRL4010:00} AHCI platform controller.
+
+\subsubsection{AHCI Controller Behavior and Port Enumeration}
+\justifying
+
+The Parallels virtual AHCI controller consistently reported:
+
+\begin{itemize}
+    \item 6 SATA ports implemented (port mask \texttt{0x3f}),
+    \item \textbf{Staggered Spin-up (SSS) capability flag set},
+    \item Only one virtual disk attached to \texttt{ata1}.
+\end{itemize}
+
+During boot, the kernel enumerated all six ports. Port \texttt{ata1} successfully linked to the virtual disk, while \texttt{ata2} through \texttt{ata6} sequentially reported ``SATA link down.'' Because the SSS flag was advertised, the Linux AHCI/libahci driver altered its scanning behavior, serializing port initialization in a manner optimized for physical drive spin-up power management—a constraint entirely irrelevant in a virtualized environment.
+
+\subsubsection{Mitigation: libahci.ignore\_sss Parameter}
+\justifying
+
+To bypass this counterproductive behavior, the kernel boot parameter \texttt{libahci.ignore\_sss=1} was applied. This parameter instructs the libahci driver to disregard the SSS capability flag and proceed with a more efficient port scanning strategy suitable for environments where staggered power sequencing is unnecessary.
+
+This single-parameter change produced the most significant kernel time reduction observed in the Parallels VM environment. Combined with custom kernel trimming (which provided a secondary improvement of approximately 100--150~ms), the total kernel time dropped from roughly 2.08~s in the stock configuration to under 0.75~s in the optimized Arch Linux ARM configuration.
+
+\subsubsection{Alternative Approaches Evaluated}
+\justifying
+
+Several alternative strategies were explored before identifying \texttt{ignore\_sss} as the high-yield solution:
+
+\begin{itemize}
+    \item \textbf{Port masking via \texttt{ahci.mask\_port\_map}:} Attempts to reduce the number of enumerated ports did not prevent the driver from probing all six ports reported by the controller.
+    \item \textbf{libata.force parameter:} Investigated for runtime port disabling, but did not consistently suppress probing in the Parallels AHCI platform path.
+    \item \textbf{Device-level timeouts (e.g., \texttt{libata.ata\_probe\_timeout}):} Could reduce per-port wait time but did not address the root cause of serialized scanning.
+\end{itemize}
+
+For the Parallels \texttt{PRL4010:00} AHCI platform device, behavioral modification through \texttt{ignore\_sss} proved more effective than attempting to hide ports or reduce timeout values.

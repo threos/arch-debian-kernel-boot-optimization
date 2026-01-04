@@ -1,0 +1,106 @@
+
+\section{Baseline Summary and Control Configuration}
+\justifying
+
+The baseline phase (Part 1) established a reproducible measurement framework across \textbf{eight test configurations} spanning distribution, architecture, and storage medium. Each configuration was measured using five cold boots under consistent setup controls, producing phase-level timing breakdowns from \texttt{systemd-analyze}. These baseline results serve as the control reference for all optimization comparisons in this final report.
+
+\begin{table}[H]
+\centering
+\caption{Test Configuration Summary (T1-T8)\footnotemark}
+\label{tab:test_configs}
+\begin{tabular}{llll}
+\toprule
+\textbf{Test ID} & \textbf{Architecture} & \textbf{Distribution} & \textbf{Storage Type} \\
+\midrule
+T1 & ARM (Parallels VM) & Debian 12 & USB flash drive \\
+T2 & ARM (Parallels VM) & Debian 12 & NVMe SSD \\
+T3 & ARM (Parallels VM) & Arch Linux & USB flash drive \\
+T4 & ARM (Parallels VM) & Arch Linux & NVMe SSD \\
+T5 & Intel x86 (bare metal) & Arch Linux & USB flash drive \\
+T6 & Intel x86 (bare metal) & Arch Linux & NVMe SSD \\
+T7 & Intel x86 (bare metal) & Debian 12 & USB flash drive \\
+T8 & Intel x86 (bare metal) & Debian 12 & NVMe SSD \\
+\bottomrule
+\end{tabular}
+\end{table}
+\footnotetext{The test configurations T5 and T7 is measured again because the original installations were lost. }
+
+
+
+\subsection{Summary of Baseline Findings}
+\justifying
+
+The baseline results highlighted clear system-level trends. NVMe-based configurations consistently achieved faster and more predictable startup behavior than USB-based configurations, reflecting lower storage latency and faster device readiness in early boot. In addition, distribution-level differences were observable in multiple configurations, with Arch-based setups generally exhibiting shorter kernel and userspace phases under comparable conditions.\\
+
+Virtual machine measurements demonstrated that hypervisor abstractions and virtual storage behavior can dominate certain phases, sometimes masking native-storage effects. For that reason, baseline findings were interpreted primarily through phase breakdowns (kernel/userspace/loader when available) rather than relying only on total boot time.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Stock-Average cold boot durations by test configuration (mean $\pm$ std.\ dev., in sec).
+(``N/A'' show that a phase is not applicable in that environment.)}
+\label{tab:avg-boot}
+\setlength{\tabcolsep}{4pt}
+
+\begin{tabular}{lcccccc}
+\hline
+\textbf{Test} &
+\textbf{Firmware (s)} &
+\textbf{Loader (s)} &
+\textbf{Kernel (s)} &
+\textbf{Userspace (s)} &
+\textbf{Initrd (s)} &
+\textbf{Total (s)} \\
+\hline
+T1 & N/A & N/A & 2.54 $\pm$ 0.03 & 7.38 $\pm$ 0.50 & N/A & 9.92 $\pm$ 0.49 \\
+T2 & N/A & N/A & 2.94 $\pm$ 0.02 & 4.39 $\pm$ 0.20 & N/A & 7.33 $\pm$ 0.21 \\
+T3 & 0.72 $\pm$ 0.06 & 1.57 $\pm$ 0.45 & 2.06 $\pm$ 0.01 & 1.70 $\pm$ 0.15 & 1.39 $\pm$ 0.09 & 7.44 $\pm$ 0.59 \\
+T4 & 1.12 $\pm$ 0.16 & 0.21 $\pm$ 0.01 & 2.08 $\pm$ 0.01 & 1.45 $\pm$ 0.01 & 1.33 $\pm$ 0.06 & 6.19 $\pm$ 0.15 \\
+T5 & 7.15 $\pm$ 0.01 & 2.60 $\pm$ 0.13 & 0.78 $\pm$ 0.00 &
+3.80 $\pm$ 0.24 & 6.70 $\pm$ 2.14 & 21.04 $\pm$ 1.99 \\
+T6 & 15.45 $\pm$ 0.05 & 1.17 $\pm$ 0.00 & 0.79 $\pm$ 0.00 &
+3.35 $\pm$ 0.01 & 1.98 $\pm$ 0.28 & 22.74 $\pm$ 0.34 \\
+T7 & 16.894 $\pm$ 0.243 & 2.776 $\pm$ 0.061 & 44.719 $\pm$ 0.342 & 91.478 $\pm$ 0.347 & N/A & 155.868 $\pm$ 1.19 \\
+T8 & 3.41 $\pm$ 0.26 & 4.44 $\pm$ 0.32 & 3.53 $\pm$ 0.04 &
+10.74 $\pm$ 0.18 & N/A & 22.12 $\pm$ 0.43 \\
+
+\hline
+\end{tabular}
+\end{table}
+
+
+Since the USB was put into read-only mode new (see \ref{sec:uki}) USB was used with same hardware and therefore stock boot times of that setup are updated as shown in Table below.
+\todo{bence bu burda akışı çok bozuyor bak yukardaki tabloya footnote koydum bunu dırek 4.2.3'e alalım mı}
+
+\begin{table}[H]
+\centering
+\caption{(T7) Stock but New Boot Time Breakdown — Intel Debian (USB)}
+\begin{tabular}{cccccc}
+\hline
+Run & Firmware (s) & Loader (s) & Kernel (s) & Userspace (s) & Total (s) \\
+\hline
+1 & 16.904 & 2.794 & 44.590 & 91.577 & 155.867 \\
+2 & 17.231 & 2.681 & 45.102 & 91.204 & 156.218 \\
+3 & 16.587 & 2.842 & 44.231 & 92.019 & 155.679 \\
+4 & 17.018 & 2.755 & 45.004 & 91.463 & 156.240 \\
+5 & 16.732 & 2.809 & 44.667 & 91.128 & 155.336 \\
+\hline
+Avg & 16.894 & 2.776 & 44.719 & 91.478 & 155.868 \\
+Std.\ Dev. & 0.243 & 0.061 & 0.342 & 0.347 & 1.19 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{media/new/_T-7-before.png}
+\caption{Stock but New Boot Time Breakdown — Intel Debian (USB)}
+\end{figure}
+    
+\subsection{Control Configuration}
+\justifying
+
+For each test ID, the Part 1 baseline measurements were treated as the \textbf{control state} (\textit{pre-optimization}). All optimized results in this report are evaluated relative to that control using the same cold-boot procedure and reporting format (mean and sample standard deviation over five trials).\\
+
+During the optimization phase, limited rework was required for a subset of configurations due to experimental constraints that affected traceability (e.g., removable-media lifecycle issues during UKI exploration). When re-measurement was necessary, the system was rebuilt to match the original Part 1 control envelope (same distribution version, same storage class, same boot path assumptions, and the same measurement discipline) however the boot times were completely different compared to first setup eventhough the same debian installation was done several times. These cases are explicitly noted in the relevant setup sections to ensure that before/after comparisons are consistent.

@@ -1,0 +1,36 @@
+\subsection{Native Environment}
+The native environment was selected to measure the impact of boot optimizations on physical x86\_64 hardware without hypervisor abstractions. Native runs provide a high-fidelity reference for changes that directly affect the \texttt{Loader} and \texttt{Kernel} phases reported by \texttt{systemd-analyze}.
+
+\subsubsection{Hardware Platform and Constraints}
+Measurements were performed across two generations of AMD Ryzen platforms to observe how CPU capability influences early-boot decompression and kernel execution:
+\begin{itemize}
+    \item \textbf{Debian native configurations (USB and NVMe):} AMD Ryzen 6000-series.
+    \item \textbf{Arch native configurations (USB and NVMe):} AMD Ryzen 7000-series.
+\end{itemize}
+
+\noindent All native tests used two storage classes:
+
+\begin{itemize}
+    \item \textbf{External removable storage:} USB 3.2 Gen1 flash drives.
+    \item \textbf{Internal baseline storage:} NVMe SSD.
+\end{itemize}
+
+During the UKI evaluation stage, the primary Kingston DataTraveler 3.2 flash drive, which was used for Intel-Debian-Usb setup in Part 1, entered to hardware-level read-only (write-protected) state. After several hours of fixing trials, setup was recreated. To preserve measurement integrity, the USB setup was migrated to a same hardware setup but with USB 3.2 Gen1 device under the same control assumptions used in the baseline.
+
+\subsubsection{Linux Installation Procedure}
+All native systems were installed from official distribution ISO images to ensure a consistent starting point. Manual partitioning was applied using:
+\begin{itemize}
+    \item a 500 MB EFI System Partition (FAT32),
+    \item an ext4 root partition.
+\end{itemize}
+
+To reduce unnecessary I/O overhead during startup:
+\begin{itemize}
+    \item swap was disabled to avoid paging behavior over the USB interface during boot.
+\end{itemize}
+
+\subsubsection{Kernel Build Environment}
+A custom kernel build workflow was used to enable controlled configuration changes and reproducible before/after comparisons. For the native optimization track, Linux Kernel \textbf{6.12.6} was used as the working kernel baseline for tuning and validation.
+
+\subsubsection{Bootloader Setup and Configuration}
+Bootloader work targeted the \texttt{Loader} phase. Native optimized setups transitioned from GRUB to \textbf{systemd-boot} \cite{systemd_boot}, with a minimal and explicit entry configuration (kernel, initramfs, and command line) to reduce variability and pre-kernel overhead.

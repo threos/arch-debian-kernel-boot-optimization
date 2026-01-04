@@ -1,0 +1,24 @@
+\section{Introduction}
+
+    \subsection{Project Continuation and Objectives}
+    \justifying
+    In the previous report (Part 1), the baseline for boot times was established by measuring cold-boot performance for the platform environments that is decided. These measurements provided an idea on how distribution, architecture, and storage medium affect the boot process. This report builds upon this baseline and explores the optimization possibilities, implementation challenges, trade offs between the efficiency and system versatility among related matters. \\
+    
+    \noindent The primary objective is to reduce boot time through kernel and boot-loader modifications that directly influence the early boot path, while keeping the experiment group and measurement method identical to Part 1. All improvements are evaluated using before/after cold-boot averages, and reported using absolute and normalized percentages to fair comparison across samples.\\
+
+    
+    \subsection{Scope of the Optimization Phase}
+    \justifying
+
+    Optimization phase is focused around the boot-loader and kernel times mainly because the firmware and user space times are not fundamentally reflects the boot performance as firmware times are heavily depends on the vendor, therefore not customizable and the user space startup times are often compromised due to desired functionalities such as daemons and display servers (Wayland, X11). Regardless, firmware time and userspace time are recorded for context and traceability, but they are not treated as primary optimization targets. This constraint is critical for fair comparison. Within this scope, the applied changes include simplifying the boot path by migrating from GRUB to \textbf{systemd-boot}, reducing kernel overhead through configuration trimming, compression strategy adjustments, and initramfs policy decisions that balance size reduction with boot safety, and mitigating platform-specific bottlenecks.\\
+
+    
+
+
+    \subsection{Measurement Methodology}
+        For each test configuration, five independent cold-boot trials were conducted. The system was fully powered off between runs to eliminate residual state and caching effects. Boot timing was captured using \texttt{systemd-analyze} \cite{systemd_analyze}, which provides a consistent phase breakdown (e.g., firmware, loader when available, kernel, userspace) and the total time to reach the target.\\
+
+        
+        \noindent After collecting five runs per configuration, the arithmetic mean and sample standard deviation were computed for each reported phase and for the total boot time. Reporting results as $\mu \pm \sigma$ reduces sensitivity to outliers and provides a transparent measure of variability, enabling fair comparison across platforms and storage media. All raw \texttt{systemd-analyze} outputs were preserved for traceability, and the averaged outcomes are summarized in the baseline and optimization tables in the following sections.\\
+        
+        \noindent \texttt{systemd-analyze} was selected as the primary timing method because it is available and comparable across both native and virtual machine environments. Alternative approaches explored during the project were not consistently applicable inside VMs (due to hypervisor abstractions and missing low-level visibility), whereas \texttt{systemd-analyze} remains stable, reproducible, and phase-consistent across the full test matrix. One remark with the systemd-analyze is the distro specific behaviour where it displays the kernel and initramfs loading times separately in Arch Linux instances where as Debian includes the initrd times to kernel. It is considered to present the totals consistently with Debian results however it is kept as discrete results because it provided some additional traceability for those measurements.

@@ -1,0 +1,38 @@
+\subsection{Virtual Machine Environment}
+\label{sec:vm_environment}
+
+\subsubsection{Virtualization Platform and Architecture}
+\justifying
+
+Virtual machine measurements were conducted using \textbf{Parallels Desktop} running on Apple Silicon hardware (MacBook Pro M4). This environment was selected to evaluate boot optimization strategies under hypervisor abstractions and to observe how virtual hardware presentation affects kernel initialization behavior.\\
+
+Each guest VM was allocated 2 CPU cores and 4096 MB of RAM. The hypervisor presents virtual hardware through UEFI firmware (EDK II), and systemd correctly detects the Parallels virtualization context during boot. Both \textbf{Arch Linux ARM (aarch64)} and \textbf{Debian 12 (arm64)} were tested as guest operating systems to assess distribution-level differences under identical virtual hardware conditions.
+    
+\subsubsection{Virtual Storage and Firmware Abstractions}
+\justifying
+
+The virtual storage topology in Parallels Desktop introduces platform-specific behavior that proved critical to kernel boot time optimization. Guest disk images are exposed through an \textbf{AHCI platform controller}, identified in the kernel as ACPI device \texttt{PRL4010:00}. This controller reports 6 SATA ports as implemented (port mask \texttt{0x3f}), even though only a single virtual disk is attached.\\
+
+During kernel initialization, the AHCI/libahci driver enumerates all six ports (\texttt{ata1} through \texttt{ata6}). While \texttt{ata1} successfully links to the virtual disk, ports \texttt{ata2} through \texttt{ata6} report ``link down'' after sequential probing. This per-port scanning behavior consumed a significant portion of the kernel boot budget in the baseline configuration.\\
+
+Additionally, the AHCI controller advertises the \textbf{Staggered Spin-up (SSS)} capability flag. In physical systems, SSS is used to manage power draw during drive initialization by sequencing port power-up. However, in this virtualized environment, the SSS flag triggers serialized scanning behavior in the Linux AHCI driver, amplifying the time cost of probing unused ports. This platform-specific characteristic became the primary target for kernel-level optimization and is discussed in detail in Section~\ref{sec:sss_optimization}.
+
+
+\subsubsection{Guest OS Installation and Configuration}
+\justifying
+
+Both guest operating systems were installed from official ARM64 distribution images using manual partitioning. Each VM used a 500~MB EFI System Partition (FAT32) and an ext4 root partition. To reduce unnecessary variability during boot measurements, swap was disabled in both configurations.Virtual disk images were hosted on internal NVMe SSD storage and  a high-performance USB 3.2 flash drive.
+
+
+\subsubsection{Kernel Build Environment}
+\justifying
+
+Custom kernel builds for the ARM guest VMs followed a minimization strategy tailored to the Parallels virtual hardware contract. The baseline configuration ensured that virtualization-specific drivers remained available:
+
+\begin{itemize}
+    \item \textbf{AHCI platform support:} Required for the \texttt{PRL4010:00} device.
+    \item \textbf{VirtIO subsystem:} Retained for GPU, network, balloon, and vsock devices exposed by the hypervisor.
+    \item \textbf{EFI and ACPI support:} Required for UEFI boot and device enumeration.
+\end{itemize}
+
+The trimming process removed unnecessary subsystems (e.g., physical hardware drivers not present in VMs, legacy protocols, unused filesystems) while preserving the minimal driver set required for stable operation under Parallels. For Arch Linux ARM, kernel version \textbf{6.18.2} was used as the working baseline for configuration tuning.

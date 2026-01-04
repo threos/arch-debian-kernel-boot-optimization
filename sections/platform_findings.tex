@@ -1,0 +1,105 @@
+\section{Platform-Specific Findings}
+\justifying
+
+While the general optimization methodology (kernel trimming, bootloader simplification, compression strategy) was applied consistently across test configurations, certain platforms exhibited unique characteristics that required specialized investigation and targeted interventions. This section documents findings specific to the Parallels Desktop virtualized ARM environment that influenced the optimization strategy and contributed significantly to the final performance gains.
+
+\subsection{Parallels VM (ARM64)}
+\justifying
+
+The Parallels Desktop hypervisor on Apple Silicon (described in Section~\ref{sec:vm_environment}) presented virtual hardware abstractions that introduced both opportunities and constraints distinct from native x86 configurations. Two findings proved particularly significant for kernel boot time optimization in this environment.
+
+\subsubsection{Staggered Spin-up Blocking Kernel Boot}
+\justifying
+
+The dominant kernel-time bottleneck in the baseline Parallels ARM configuration was traced to SATA port probing behavior triggered by the virtual AHCI controller's capability advertisements. As described in Section~\ref{sec:sss_optimization}, the \texttt{PRL4010:00} AHCI platform device reports 6 SATA ports and sets the Staggered Spin-up (SSS) capability flag, despite only one virtual disk being present.
+
+\paragraph{Observed Behavior}
+Kernel logs consistently showed the following pattern during boot:
+
+\begin{itemize}
+    \item AHCI controller initialization: \texttt{ahci PRL4010:00} with 6 ports implemented (\texttt{0x3f}).
+    \item SSS flag detected: ``SSS flag set, parallel bus scan disabled.''
+    \item Sequential port enumeration: \texttt{ata1} through \texttt{ata6}.
+    \item \texttt{ata1}: SATA link established, device detected.
+    \item \texttt{ata2}--\texttt{ata6}: Each port sequentially reports ``SATA link down.''
+\end{itemize}
+
+The time spent probing these five non-existent devices dominated the kernel initialization phase. Because the SSS flag altered the driver's scanning logic to serialize port initialization (appropriate for managing mechanical drive power draw in physical systems), the overhead was amplified beyond what would occur with parallel port probing.
+
+\paragraph{Impact on Boot Time}
+In the stock Arch Linux ARM configuration, kernel time averaged \textbf{2.078~s} on NVMe and \textbf{2.060~s} on USB (Table~\ref{tab:arch_arm_stock}). Analysis using \texttt{initcall\_debug} and monotonic kernel logs revealed that the majority of this time was consumed not by initcall execution, but by the gaps between calls—specifically, the serialized SATA link detection attempts.
+
+\begin{table}[H]
+\centering
+\caption{Arch Linux ARM baseline kernel time (stock kernel 6.18.2-1-aarch64-ARCH)}
+\label{tab:arch_arm_stock}
+\begin{tabular}{lcc}
+\hline
+\textbf{Configuration} & \textbf{Kernel (s)} & \textbf{Initrd (s)} \\
+\hline
+NVMe & 2.078 $\pm$ 0.007 & 1.331 $\pm$ 0.054 \\
+USB & 2.060 $\pm$ 0.008 & 1.394 $\pm$ 0.083 \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Mitigation and Results}
+Applying the kernel parameter \texttt{libahci.ignore\_sss=1} instructed the libahci driver to disregard the SSS capability and adopt a more efficient scanning strategy. This intervention, combined with custom kernel trimming (which independently contributed approximately 100--150~ms of improvement), reduced kernel time to an average of \textbf{0.719~s} on NVMe and \textbf{0.822~s} on USB (Table~\ref{tab:arch_arm_optimized}).
+
+\begin{table}[H]
+\centering
+\caption{Arch Linux ARM optimized kernel time (custom kernel + \texttt{ignore\_sss})}
+\label{tab:arch_arm_optimized}
+\begin{tabular}{lcc}
+\hline
+\textbf{Configuration} & \textbf{Kernel (s)} & \textbf{Initrd (s)} \\
+\hline
+NVMe & 0.719 $\pm$ 0.024 & 0 \\
+USB & 0.822 $\pm$ 0.020 & 0 \\
+\hline
+\end{tabular}
+\end{table}
+
+The elimination of the initrd phase (reduction from $\sim$1.3~s to 0) was achieved through kernel configuration changes that built essential drivers directly into the kernel image, removing the need for a separate early-boot module loading phase as measured by \texttt{systemd-analyze}.
+
+The combined kernel time reduction represents a \textbf{65\% improvement} on NVMe and a \textbf{60\% improvement} on USB, with the SSS mitigation contributing the majority of the gain. This finding demonstrates that hypervisor-specific virtual hardware behavior can dominate kernel initialization time and requires profiling-driven investigation rather than assumptions based on physical hardware characteristics.
+
+\subsubsection{Default Unused Devices and Probing Overhead}
+\justifying
+
+Beyond the SSS-specific issue, the Parallels virtual hardware presentation includes devices that may not be active or relevant to minimal boot configurations. During kernel initialization, the driver stack enumerates and attempts to initialize these devices even when they contribute no functionality to the boot path.
+
+\paragraph{Virtual Hardware Enumeration}
+Parallels Desktop exposes a standard set of virtual devices through ACPI and PCI enumeration, including:
+
+\begin{itemize}
+    \item VirtIO devices (GPU, network, balloon, vsock),
+    \item AHCI storage controller (even when not all ports are populated),
+    \item Audio devices,
+    \item USB controller infrastructure (even when no USB devices are passed through),
+    \item Input devices (keyboard, mouse, tablet).
+\end{itemize}
+
+While these devices are necessary for full guest functionality, their initialization during the critical boot path adds measurable overhead. For a minimal boot configuration focused solely on reaching a usable system state as quickly as possible, some of these devices could theoretically be deferred or disabled.
+
+\paragraph{Practical Considerations}
+Attempts to aggressively disable unused devices through kernel configuration or boot parameters risk breaking hypervisor-guest integration features (e.g., Parallels Tools, clipboard sharing, folder sharing). Additionally, the time cost of individual device probes is generally small compared to the AHCI/SSS issue; reducing this overhead requires careful cost-benefit analysis to avoid sacrificing system usability for marginal boot time gains.
+
+For this project, the focus remained on high-impact, low-risk optimizations. The SSS mitigation provided the largest return, and further device-level trimming was not pursued beyond standard kernel configuration minimization. Future work could explore hypervisor-specific device filtering or deferred initialization strategies if additional kernel time reduction is required.
+
+\paragraph{Applicability to Debian ARM}
+The Parallels-specific findings documented here apply equally to Debian 12 ARM64 guests running under the same hypervisor. The \texttt{PRL4010:00} AHCI controller and SSS behavior are hypervisor-presented characteristics, not distribution-dependent.
+
+Debian 12 ARM64 measurements confirmed this transferability. In the stock configuration using kernel 6.1.0-37-arm64, kernel boot times showed similar patterns to Arch Linux ARM:
+\begin{itemize}
+    \item NVMe: 2.942~s average kernel time
+    \item USB: 2.539~s average kernel time
+\end{itemize}
+
+After applying custom kernel optimization with the same \texttt{libahci.ignore\_sss=1} mitigation strategy (custom kernel 6.1.158-prl-fast), Debian achieved comparable reductions:
+\begin{itemize}
+    \item NVMe: 1.008~s kernel time (\textbf{66\% improvement})
+    \item USB: 1.003~s kernel time (\textbf{61\% improvement})
+\end{itemize}
+
+These results validate that the AHCI/SSS optimization is platform-independent within the Parallels environment and provides consistent high-impact improvements across both major distributions tested. The slightly slower absolute kernel times in Debian compared to Arch (approximately 250--300~ms) can be attributed to distribution-specific kernel configuration differences and the Debian stable kernel version (6.1.x) versus Arch's more recent kernel base (6.18.x), but the relative improvement from the SSS mitigation remains consistent at approximately 60--66\% kernel time reduction.
